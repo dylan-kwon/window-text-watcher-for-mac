@@ -40,6 +40,23 @@ zsh scripts/run_app.sh
 - 대상 문자열이 사라졌다 다시 나타난 경우에도 마지막 알림 이후 `재알림` 시간이 지나야 다시 알림
 - OCR 수행 주기: 약 0.45초
 
+## 실시간 감시 상태 점검
+
+- 캡처 중 2초마다 상태 점검
+- 정상 캡처 신호 또는 첫 유효 화면이 10초 이상 없을 때 시스템 알림 표시
+- ScreenCaptureKit의 스트림 중단 오류 수신 시 즉시 알림 표시
+- OCR 처리 10초 이상 지연 또는 3회 연속 실패 시 시스템 알림 표시
+- 화면 변화가 없는 정상 `idle` 신호는 캡처 정상 동작으로 처리, 마지막 유효 화면으로 OCR 계속 수행
+- 빈 OCR 결과는 정상 처리로 판단
+- 앱 상단에 `감시 이상` 및 원인·조치 방법 표시
+- 동일 장애 알림 중복 억제, 정상 상태 복귀 후 재발 시 새 알림 표시
+- 사용자가 `중지` 버튼으로 중지한 경우 장애 알림 제외
+- 장애 지속 시 대상 창·화면 기록 권한 확인 후 캡처 중지 및 다시 시작
+- 시스템 알림 권한과 배너 설정 필요, `테스트 알림`으로 표시 여부 확인
+- 앱 종료·앱 전체 멈춤·macOS 잠자기 동안 즉시 알림 불가
+- 대상 프로그램 자체의 화면 멈춤은 정상 정지 화면과 구분 불가
+- 중단 오류 처리 기준: [Apple SCStreamDelegate 문서](https://developer.apple.com/documentation/screencapturekit/scstreamdelegate/stream(_:didstopwitherror:))
+
 ## 테스트
 
 ```bash
@@ -48,6 +65,7 @@ swift test
 
 - 텍스트 매칭
 - 알림 중복 방지 및 cooldown
+- 감시 중단·OCR 지연·연속 실패·정상 대기·복구·수동 중지·알림 중복 억제
 - Aspect Fit 미리보기 좌표와 Vision OCR ROI 좌표 변환
 
 ## 구조
@@ -58,6 +76,7 @@ swift test
 - `RegionMapper`: 미리보기 드래그 영역과 OCR ROI 좌표 변환
 - `TextMatcher`: OCR 결과와 대상 문자열 비교
 - `DetectionGate`: 중복 알림 및 cooldown 제어
+- `MonitoringHealth`: 캡처·OCR 상태 점검 및 장애 알림 중복 억제
 
 ## 앱 이름 변경 및 권한
 

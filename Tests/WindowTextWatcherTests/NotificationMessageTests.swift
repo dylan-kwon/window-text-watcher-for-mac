@@ -13,6 +13,14 @@ final class NotificationMessageTests: XCTestCase {
         XCTAssertTrue(message.body.contains("작업이 완료되었습니다"))
     }
 
+    func testMonitoringFailureMessageIncludesReasonAndAction() {
+        let message = NotificationMessage.monitoringFailure(issue: .captureStopped)
+
+        XCTAssertEqual(message.title, "실시간 감시 이상")
+        XCTAssertTrue(message.body.contains("중단"))
+        XCTAssertTrue(message.body.contains("다시 시작"))
+    }
+
     func testTestNotificationMessageIsClearlyIdentified() {
         let message = NotificationMessage.test
 

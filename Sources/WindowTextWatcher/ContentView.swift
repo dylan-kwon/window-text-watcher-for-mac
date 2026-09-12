@@ -7,6 +7,12 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 14) {
             header
+            if let issue = model.monitoringIssue {
+                Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             captureControls
             targetControls
             previewAndResult
@@ -36,10 +42,10 @@ struct ContentView: View {
             Spacer()
 
             Label(
-                model.isCapturing ? "실시간 캡처 중" : "중지됨",
+                model.monitoringIssue != nil ? "감시 이상" : (model.isCapturing ? "실시간 캡처 중" : "중지됨"),
                 systemImage: model.isCapturing ? "record.circle" : "stop.circle"
             )
-            .foregroundStyle(model.isCapturing ? .green : .secondary)
+            .foregroundStyle(model.monitoringIssue != nil ? .orange : (model.isCapturing ? .green : .secondary))
 
             Text(model.notificationStatusText)
                 .font(.caption)
@@ -75,7 +81,7 @@ struct ContentView: View {
             }
             .labelsHidden()
             .frame(maxWidth: .infinity)
-            .disabled(model.needsScreenRecordingPermission)
+            .disabled(model.needsScreenRecordingPermission || model.isCapturing || model.isChangingCapture)
 
             Button("새로고침") {
                 model.refreshWindows()
@@ -86,12 +92,13 @@ struct ContentView: View {
                     model.stopCapture()
                 }
                 .keyboardShortcut(".", modifiers: .command)
+                .disabled(model.isChangingCapture)
             } else {
                 Button("캡처 시작") {
                     model.startCapture()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.selectedWindowID == nil)
+                .disabled(model.selectedWindowID == nil || model.isChangingCapture)
             }
         }
     }

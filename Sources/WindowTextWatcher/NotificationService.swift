@@ -28,6 +28,13 @@ struct NotificationMessage {
         )
     }
 
+    static func monitoringFailure(issue: MonitoringIssue) -> NotificationMessage {
+        NotificationMessage(
+            title: "실시간 감시 이상",
+            body: issue.message
+        )
+    }
+
     static let test = NotificationMessage(
         title: "Window Text Watcher",
         body: "시스템 테스트 알림이 정상적으로 전달되었습니다."
@@ -68,6 +75,17 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             target: target,
             recognizedText: recognizedText
             )
+        )
+    }
+
+    func sendMonitoringFailureNotification(
+        issue: MonitoringIssue,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        send(
+            .monitoringFailure(issue: issue),
+            identifier: "monitoring-\(UUID().uuidString)",
+            completion: completion
         )
     }
 

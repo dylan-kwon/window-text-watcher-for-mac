@@ -19,14 +19,17 @@ struct CaptureWindow: Identifiable {
     }
 }
 
-final class ScreenCaptureService: NSObject, SCStreamOutput {
+@MainActor
+final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
     var onFrame: ((CGImage) -> Void)?
+    var onHeartbeat: (() -> Void)?
+    var onFailure: ((Error) -> Void)?
 
     private let sampleQueue = DispatchQueue(
         label: "WindowTextWatcher.ScreenCapture",
         qos: .userInteractive
     )
-    private let ciContext = CIContext(
+    nonisolated private let ciContext = CIContext(
         options: [CIContextOption.cacheIntermediates: false]
     )
     private var stream: SCStream?
@@ -84,15 +87,20 @@ final class ScreenCaptureService: NSObject, SCStreamOutput {
         let stream = SCStream(
             filter: filter,
             configuration: configuration,
-            delegate: nil
+            delegate: self
         )
         try stream.addStreamOutput(
             self,
             type: .screen,
             sampleHandlerQueue: sampleQueue
         )
-        try await stream.startCapture()
         self.stream = stream
+        do {
+            try await stream.startCapture()
+        } catch {
+            self.stream = nil
+            throw error
+        }
     }
 
     func stop() async {
@@ -100,17 +108,38 @@ final class ScreenCaptureService: NSObject, SCStreamOutput {
             return
         }
 
-        try? await stream.stopCapture()
         self.stream = nil
+        try? await stream.stopCapture()
     }
 
-    func stream(
+    nonisolated func stream(
         _ stream: SCStream,
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of outputType: SCStreamOutputType
     ) {
         guard outputType == .screen,
               sampleBuffer.isValid,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                sampleBuffer,
+                createIfNecessary: false
+              ) as? [[SCStreamFrameInfo: Any]],
+              let rawStatus = attachments.first?[.status] as? Int,
+              let status = SCFrameStatus(rawValue: rawStatus) else {
+            return
+        }
+
+        let streamID = ObjectIdentifier(stream)
+        if status == .idle {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.stream.map(ObjectIdentifier.init) == streamID else {
+                    return
+                }
+                self.onHeartbeat?()
+            }
+            return
+        }
+
+        guard status == .complete,
               let pixelBuffer = sampleBuffer.imageBuffer else {
             return
         }
@@ -123,6 +152,25 @@ final class ScreenCaptureService: NSObject, SCStreamOutput {
             return
         }
 
-        onFrame?(image)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.stream.map(ObjectIdentifier.init) == streamID else {
+                return
+            }
+            self.onFrame?(image)
+        }
+    }
+
+    nonisolated func stream(
+        _ stream: SCStream,
+        didStopWithError error: Error
+    ) {
+        let streamID = ObjectIdentifier(stream)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.stream.map(ObjectIdentifier.init) == streamID else {
+                return
+            }
+            self.stream = nil
+            self.onFailure?(error)
+        }
     }
 }

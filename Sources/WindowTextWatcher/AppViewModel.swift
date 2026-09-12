@@ -22,6 +22,8 @@ final class AppViewModel: ObservableObject {
     @Published var cooldownSeconds: Double = 5
     @Published var recognizedText = ""
     @Published var isCapturing = false
+    @Published var isChangingCapture = false
+    @Published var monitoringIssue: MonitoringIssue?
     @Published var isTargetDetected = false
     @Published var needsScreenRecordingPermission = false
     @Published var statusText = "캡처할 창을 선택하세요."
@@ -34,6 +36,9 @@ final class AppViewModel: ObservableObject {
     private var isOCRInFlight = false
     private var detectionGate = DetectionGate(cooldown: 5)
     private let ocrInterval: TimeInterval = 0.45
+    private var monitoringHealth = MonitoringHealth()
+    private var healthTimer: Timer?
+    private var captureSessionID = UUID()
 
     init(
         arguments: [String] = ProcessInfo.processInfo.arguments
@@ -41,9 +46,17 @@ final class AppViewModel: ObservableObject {
         let launchOptions = LaunchOptions(arguments: arguments)
 
         captureService.onFrame = { [weak self] image in
-            DispatchQueue.main.async {
-                self?.handleFrame(image)
+            self?.handleFrame(image)
+        }
+        captureService.onHeartbeat = { [weak self] in
+            guard let self, self.isCapturing else {
+                return
             }
+            self.monitoringHealth.receivedHeartbeat(at: ProcessInfo.processInfo.systemUptime)
+            self.processLatestFrame()
+        }
+        captureService.onFailure = { [weak self] error in
+            self?.handleCaptureFailure(error)
         }
 
         notificationService.onPresented = { [weak self] identifier in
@@ -218,6 +231,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func startCapture() {
+        guard !isCapturing, !isChangingCapture else {
+            return
+        }
+
         guard let selectedWindowID,
               let window = windows.first(where: { $0.id == selectedWindowID }) else {
             statusText = "먼저 캡처할 창을 선택하세요."
@@ -226,26 +243,105 @@ final class AppViewModel: ObservableObject {
 
         statusText = "캡처 시작 중…"
         detectionGate.reset()
+        captureSessionID = UUID()
+        let sessionID = captureSessionID
+        isCapturing = true
+        isChangingCapture = true
+        isOCRInFlight = false
+        lastOCRDate = .distantPast
+        latestFrame = nil
+        recognizedText = ""
+        isTargetDetected = false
+        monitoringIssue = nil
+        monitoringHealth.start(at: ProcessInfo.processInfo.systemUptime)
+        startHealthTimer()
 
         Task {
+            defer {
+                isChangingCapture = false
+            }
             do {
                 try await captureService.start(window: window)
-                isCapturing = true
+                guard captureSessionID == sessionID else {
+                    return
+                }
                 statusText = "캡처 중 · 미리보기에서 OCR 영역을 드래그하세요."
             } catch {
-                isCapturing = false
-                statusText = "캡처 시작 실패: \(error.localizedDescription)"
+                guard captureSessionID == sessionID else {
+                    return
+                }
+                handleCaptureFailure(error)
             }
         }
     }
 
     func stopCapture() {
+        guard !isChangingCapture else {
+            return
+        }
+        isChangingCapture = true
+        isCapturing = false
+        captureSessionID = UUID()
+        healthTimer?.invalidate()
+        healthTimer = nil
+        monitoringHealth.stop()
+        monitoringIssue = nil
+        isOCRInFlight = false
+        isTargetDetected = false
+        statusText = "캡처가 중지되었습니다."
+
         Task {
             await captureService.stop()
-            isCapturing = false
-            isTargetDetected = false
-            statusText = "캡처가 중지되었습니다."
+            isChangingCapture = false
         }
+    }
+
+    private func startHealthTimer() {
+        healthTimer?.invalidate()
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.checkMonitoringHealth()
+            }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        healthTimer = timer
+    }
+
+    private func checkMonitoringHealth() {
+        guard isCapturing else {
+            return
+        }
+        let newIssue = monitoringHealth.check(at: ProcessInfo.processInfo.systemUptime)
+        monitoringIssue = monitoringHealth.issue
+        if monitoringIssue != nil {
+            isTargetDetected = false
+        }
+        if let newIssue {
+            notificationService.sendMonitoringFailureNotification(issue: newIssue) { [weak self] result in
+                DispatchQueue.main.async {
+                    if case .failure(let error) = result {
+                        self?.notificationStatusText = "감시 이상 알림 전송 실패: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleCaptureFailure(_ error: Error) {
+        guard isCapturing else {
+            return
+        }
+        monitoringHealth.streamFailed()
+        checkMonitoringHealth()
+        isCapturing = false
+        captureSessionID = UUID()
+        isOCRInFlight = false
+        isTargetDetected = false
+        healthTimer?.invalidate()
+        healthTimer = nil
+        monitoringHealth.stop()
+        statusText = "캡처 중단: \(error.localizedDescription)"
     }
 
     func resetRegion() {
@@ -253,9 +349,17 @@ final class AppViewModel: ObservableObject {
     }
 
     private func handleFrame(_ image: CGImage) {
+        guard isCapturing else {
+            return
+        }
         latestFrame = image
+        monitoringHealth.receivedFrame(at: ProcessInfo.processInfo.systemUptime)
+        processLatestFrame()
+    }
 
+    private func processLatestFrame() {
         guard isCapturing,
+              let image = latestFrame,
               !isOCRInFlight,
               Date().timeIntervalSince(lastOCRDate) >= ocrInterval else {
             return
@@ -264,12 +368,16 @@ final class AppViewModel: ObservableObject {
         isOCRInFlight = true
         lastOCRDate = Date()
         let currentRegion = region
+        let sessionID = captureSessionID
+        monitoringHealth.ocrStarted(at: ProcessInfo.processInfo.systemUptime)
 
         ocrService.recognize(
             image: image,
             topLeftNormalizedRegion: currentRegion
         ) { [weak self] result in
-            guard let self else {
+            guard let self,
+                  self.isCapturing,
+                  self.captureSessionID == sessionID else {
                 return
             }
 
@@ -277,10 +385,20 @@ final class AppViewModel: ObservableObject {
 
             switch result {
             case .success(let text):
+                self.monitoringHealth.ocrFinished(
+                    succeeded: true,
+                    at: ProcessInfo.processInfo.systemUptime
+                )
                 self.handleRecognizedText(text)
+                self.statusText = "캡처 중 · 미리보기에서 OCR 영역을 드래그하세요."
             case .failure(let error):
+                self.monitoringHealth.ocrFinished(
+                    succeeded: false,
+                    at: ProcessInfo.processInfo.systemUptime
+                )
                 self.statusText = "OCR 오류: \(error.localizedDescription)"
             }
+            self.checkMonitoringHealth()
         }
     }
 
