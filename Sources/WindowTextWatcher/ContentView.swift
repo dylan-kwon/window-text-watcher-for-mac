@@ -87,13 +87,15 @@ struct ContentView: View {
                 model.refreshWindows()
             }
 
-            if model.isCapturing {
+            if model.isCapturing || model.monitoringIssue != nil {
                 Button("중지") {
                     model.stopCapture()
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(model.isChangingCapture)
-            } else {
+            }
+
+            if !model.isCapturing {
                 Button("캡처 시작") {
                     model.startCapture()
                 }

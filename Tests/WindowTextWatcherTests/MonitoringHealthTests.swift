@@ -10,13 +10,16 @@ final class MonitoringHealthTests: XCTestCase {
         XCTAssertNil(health.check(at: 200))
     }
 
-    func testMissingCaptureHasGracePeriodAndDeduplicates() {
+    func testMissingCaptureHasGracePeriodAndRepeatsAfterCooldown() {
         var health = MonitoringHealth()
         health.start(at: 0)
         XCTAssertNil(health.check(at: 9))
         XCTAssertEqual(health.check(at: 10), .captureStalled)
         XCTAssertNil(health.check(at: 11))
-        XCTAssertNil(health.check(at: 100))
+        XCTAssertNil(health.check(at: 14.9))
+        XCTAssertEqual(health.check(at: 15), .captureStalled)
+        XCTAssertNil(health.check(at: 15.1))
+        XCTAssertEqual(health.check(at: 100), .captureStalled)
     }
 
     func testIdleCaptureDoesNotRequireNewOCR() {
@@ -180,5 +183,101 @@ final class MonitoringHealthTests: XCTestCase {
         health.receivedHeartbeat(at: 13)
 
         XCTAssertEqual(health.check(at: 13), .ocrStalled)
+    }
+
+    func testPersistentStreamFailureRepeatsUntilManualStop() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+        health.streamFailed()
+
+        XCTAssertEqual(health.check(at: 1), .captureStopped)
+        XCTAssertNil(health.check(at: 5.9))
+        XCTAssertEqual(health.check(at: 6), .captureStopped)
+
+        health.stop()
+
+        XCTAssertNil(health.check(at: 11))
+        XCTAssertNil(health.issue)
+    }
+
+    func testHangingOCRRepeatsUntilRecovery() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+        health.receivedFrame(at: 1)
+        health.ocrStarted(at: 1)
+        health.receivedHeartbeat(at: 11)
+
+        XCTAssertEqual(health.check(at: 11), .ocrStalled)
+        XCTAssertNil(health.check(at: 15.9))
+        XCTAssertEqual(health.check(at: 16), .ocrStalled)
+
+        health.ocrFinished(succeeded: true, at: 17)
+        health.receivedHeartbeat(at: 22)
+
+        XCTAssertNil(health.check(at: 22))
+        XCTAssertNil(health.issue)
+    }
+
+    func testPersistentOCRFailuresRepeatAfterCooldown() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+        health.receivedFrame(at: 1)
+        for time in 1...3 {
+            health.ocrStarted(at: Double(time))
+            health.ocrFinished(succeeded: false, at: Double(time))
+        }
+
+        XCTAssertEqual(health.check(at: 3), .ocrFailed)
+        XCTAssertNil(health.check(at: 7.9))
+        XCTAssertEqual(health.check(at: 8), .ocrFailed)
+    }
+
+    func testCooldownChangesUseTimeOfLastNotification() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+        health.streamFailed()
+
+        XCTAssertEqual(health.check(at: 1, cooldown: 30), .captureStopped)
+        XCTAssertNil(health.check(at: 6, cooldown: 30))
+        XCTAssertEqual(health.check(at: 6, cooldown: 5), .captureStopped)
+        XCTAssertNil(health.check(at: 11, cooldown: 10))
+        XCTAssertEqual(health.check(at: 16, cooldown: 10), .captureStopped)
+    }
+
+    func testZeroAndNegativeCooldownAllowEveryCheck() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+        health.streamFailed()
+
+        XCTAssertEqual(health.check(at: 1, cooldown: 0), .captureStopped)
+        XCTAssertEqual(health.check(at: 1, cooldown: 0), .captureStopped)
+        XCTAssertEqual(health.check(at: 1, cooldown: -1), .captureStopped)
+    }
+
+    func testNewIssueAlertsImmediatelyWithinPreviousIssueCooldown() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+
+        XCTAssertEqual(health.check(at: 10), .captureStalled)
+
+        health.streamFailed()
+
+        XCTAssertEqual(health.check(at: 11), .captureStopped)
+        XCTAssertNil(health.check(at: 12))
+        XCTAssertEqual(health.check(at: 16), .captureStopped)
+    }
+
+    func testRecoveryResetsNotificationCooldown() {
+        var health = MonitoringHealth()
+        health.start(at: 0)
+
+        XCTAssertEqual(health.check(at: 10, cooldown: 60), .captureStalled)
+
+        health.receivedFrame(at: 11)
+        health.ocrStarted(at: 11)
+        health.ocrFinished(succeeded: true, at: 12)
+
+        XCTAssertNil(health.check(at: 12, cooldown: 60))
+        XCTAssertEqual(health.check(at: 21, cooldown: 60), .captureStalled)
     }
 }

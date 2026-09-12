@@ -309,10 +309,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func checkMonitoringHealth() {
-        guard isCapturing else {
-            return
-        }
-        let newIssue = monitoringHealth.check(at: ProcessInfo.processInfo.systemUptime)
+        let newIssue = monitoringHealth.check(
+            at: ProcessInfo.processInfo.systemUptime,
+            cooldown: cooldownSeconds
+        )
         monitoringIssue = monitoringHealth.issue
         if monitoringIssue != nil {
             isTargetDetected = false
@@ -338,9 +338,6 @@ final class AppViewModel: ObservableObject {
         captureSessionID = UUID()
         isOCRInFlight = false
         isTargetDetected = false
-        healthTimer?.invalidate()
-        healthTimer = nil
-        monitoringHealth.stop()
         statusText = "캡처 중단: \(error.localizedDescription)"
     }
 

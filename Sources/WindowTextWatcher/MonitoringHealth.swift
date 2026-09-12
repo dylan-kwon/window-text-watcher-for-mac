@@ -30,7 +30,7 @@ struct MonitoringHealth {
     private var nextPendingOCRSince: TimeInterval?
     private var consecutiveOCRFailures = 0
     private var hasStreamFailed = false
-    private var notifiedIssues: Set<MonitoringIssue> = []
+    private var lastNotificationTimes: [MonitoringIssue: TimeInterval] = [:]
     private let timeout: TimeInterval = 10
 
     mutating func start(at time: TimeInterval) {
@@ -80,7 +80,10 @@ struct MonitoringHealth {
         hasStreamFailed = true
     }
 
-    mutating func check(at time: TimeInterval) -> MonitoringIssue? {
+    mutating func check(
+        at time: TimeInterval,
+        cooldown: TimeInterval = 5
+    ) -> MonitoringIssue? {
         guard let startedAt else {
             return nil
         }
@@ -97,14 +100,19 @@ struct MonitoringHealth {
             issue = .ocrStalled
         } else {
             issue = nil
-            notifiedIssues.removeAll()
+            lastNotificationTimes.removeAll()
         }
 
-        guard let issue,
-              notifiedIssues.insert(issue).inserted else {
+        guard let issue else {
             return nil
         }
 
+        if let lastNotificationTime = lastNotificationTimes[issue],
+           time - lastNotificationTime < max(0, cooldown) {
+            return nil
+        }
+
+        lastNotificationTimes[issue] = time
         return issue
     }
 }
