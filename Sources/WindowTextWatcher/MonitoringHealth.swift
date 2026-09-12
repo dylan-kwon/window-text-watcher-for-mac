@@ -82,7 +82,7 @@ struct MonitoringHealth {
 
     mutating func check(
         at time: TimeInterval,
-        cooldown: TimeInterval = 5
+        cooldown: TimeInterval = DetectionGate.defaultCooldown
     ) -> MonitoringIssue? {
         guard let startedAt else {
             return nil

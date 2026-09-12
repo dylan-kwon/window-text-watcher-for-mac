@@ -2,6 +2,16 @@ import XCTest
 @testable import WindowTextWatcher
 
 final class DetectionGateTests: XCTestCase {
+    func testDefaultCooldownRepeatsAfterThreeSeconds() {
+        var gate = DetectionGate()
+        let now = Date(timeIntervalSince1970: 100)
+
+        XCTAssertEqual(gate.cooldown, 3)
+        XCTAssertTrue(gate.shouldNotify(isMatch: true, now: now))
+        XCTAssertFalse(gate.shouldNotify(isMatch: true, now: now.addingTimeInterval(2.9)))
+        XCTAssertTrue(gate.shouldNotify(isMatch: true, now: now.addingTimeInterval(3)))
+    }
+
     func testRepeatsWhileMatchRemainsAfterCooldown() {
         var gate = DetectionGate(cooldown: 5)
         let now = Date(timeIntervalSince1970: 100)

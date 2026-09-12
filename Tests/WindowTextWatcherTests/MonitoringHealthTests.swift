@@ -16,9 +16,9 @@ final class MonitoringHealthTests: XCTestCase {
         XCTAssertNil(health.check(at: 9))
         XCTAssertEqual(health.check(at: 10), .captureStalled)
         XCTAssertNil(health.check(at: 11))
-        XCTAssertNil(health.check(at: 14.9))
-        XCTAssertEqual(health.check(at: 15), .captureStalled)
-        XCTAssertNil(health.check(at: 15.1))
+        XCTAssertNil(health.check(at: 12.9))
+        XCTAssertEqual(health.check(at: 13), .captureStalled)
+        XCTAssertNil(health.check(at: 13.1))
         XCTAssertEqual(health.check(at: 100), .captureStalled)
     }
 
@@ -191,8 +191,8 @@ final class MonitoringHealthTests: XCTestCase {
         health.streamFailed()
 
         XCTAssertEqual(health.check(at: 1), .captureStopped)
-        XCTAssertNil(health.check(at: 5.9))
-        XCTAssertEqual(health.check(at: 6), .captureStopped)
+        XCTAssertNil(health.check(at: 3.9))
+        XCTAssertEqual(health.check(at: 4), .captureStopped)
 
         health.stop()
 
@@ -208,8 +208,8 @@ final class MonitoringHealthTests: XCTestCase {
         health.receivedHeartbeat(at: 11)
 
         XCTAssertEqual(health.check(at: 11), .ocrStalled)
-        XCTAssertNil(health.check(at: 15.9))
-        XCTAssertEqual(health.check(at: 16), .ocrStalled)
+        XCTAssertNil(health.check(at: 13.9))
+        XCTAssertEqual(health.check(at: 14), .ocrStalled)
 
         health.ocrFinished(succeeded: true, at: 17)
         health.receivedHeartbeat(at: 22)
@@ -228,8 +228,8 @@ final class MonitoringHealthTests: XCTestCase {
         }
 
         XCTAssertEqual(health.check(at: 3), .ocrFailed)
-        XCTAssertNil(health.check(at: 7.9))
-        XCTAssertEqual(health.check(at: 8), .ocrFailed)
+        XCTAssertNil(health.check(at: 5.9))
+        XCTAssertEqual(health.check(at: 6), .ocrFailed)
     }
 
     func testCooldownChangesUseTimeOfLastNotification() {

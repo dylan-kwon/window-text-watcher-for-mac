@@ -1,11 +1,13 @@
 import Foundation
 
 struct DetectionGate {
+    static let defaultCooldown: TimeInterval = 3
+
     var cooldown: TimeInterval
 
     private var lastNotificationDate: Date?
 
-    init(cooldown: TimeInterval) {
+    init(cooldown: TimeInterval = DetectionGate.defaultCooldown) {
         self.cooldown = max(0, cooldown)
     }
 

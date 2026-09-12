@@ -19,7 +19,7 @@ final class AppViewModel: ObservableObject {
             detectionGate.reset()
         }
     }
-    @Published var cooldownSeconds: Double = 5
+    @Published var cooldownSeconds: Double = DetectionGate.defaultCooldown
     @Published var recognizedText = ""
     @Published var isCapturing = false
     @Published var isChangingCapture = false
@@ -34,7 +34,7 @@ final class AppViewModel: ObservableObject {
     private let notificationService = NotificationService()
     private var lastOCRDate = Date.distantPast
     private var isOCRInFlight = false
-    private var detectionGate = DetectionGate(cooldown: 5)
+    private var detectionGate = DetectionGate()
     private let ocrInterval: TimeInterval = 0.45
     private var monitoringHealth = MonitoringHealth()
     private var healthTimer: Timer?
