@@ -3,6 +3,9 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
+    @State private var keywordDraft = ""
+    @State private var keywordError: String?
+    @FocusState private var isKeywordInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -106,25 +109,120 @@ struct ContentView: View {
     }
 
     private var targetControls: some View {
-        HStack(spacing: 14) {
-            TextField("감지할 텍스트 (예: 작업이 완료되었습니다)", text: $model.targetText)
-                .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("탐지 키워드 \(model.keywordMonitor.keywords.count)개")
+                    .font(.headline)
+                Text("하나라도 포함되면 알림 · 개수 제한 없이 추가")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
 
-            Toggle("대소문자 구분", isOn: $model.caseSensitive)
-                .toggleStyle(.checkbox)
+            HStack(spacing: 14) {
+                TextField("키워드 입력 후 Enter (예: 작업 완료)", text: $keywordDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isKeywordInputFocused)
+                    .onSubmit {
+                        addKeyword()
+                    }
+                    .onChange(of: keywordDraft) { _, _ in
+                        keywordError = nil
+                    }
+                    .accessibilityLabel("추가할 탐지 키워드")
 
-            Stepper(
-                "재알림 \(Int(model.cooldownSeconds))초",
-                value: $model.cooldownSeconds,
-                in: 0...60,
-                step: 1
-            )
-            .frame(width: 130)
+                Button("추가", systemImage: "plus") {
+                    addKeyword()
+                }
+                .disabled(keywordDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
 
-            Button("영역 초기화") {
-                model.resetRegion()
+            HStack(spacing: 14) {
+                Toggle("대소문자 구분", isOn: $model.caseSensitive)
+                    .toggleStyle(.checkbox)
+
+                Toggle("띄어쓰기 무시", isOn: $model.ignoreWhitespace)
+                    .toggleStyle(.checkbox)
+                    .help("공백·줄바꿈·탭을 무시하여 ‘낚시금지’로 ‘낚시 금지’도 탐지합니다.")
+
+                Stepper(
+                    "재알림 \(Int(model.cooldownSeconds))초",
+                    value: $model.cooldownSeconds,
+                    in: 0...60,
+                    step: 1
+                )
+                .frame(width: 130)
+
+                Spacer()
+
+                Text("키워드·설정 자동 저장")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button("영역 초기화") {
+                    model.resetRegion()
+                }
+            }
+
+            if let keywordError {
+                Text(keywordError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            if model.keywordMonitor.keywords.isEmpty {
+                Text("탐지할 키워드를 추가하세요. 단어와 문장을 모두 등록할 수 있습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(model.keywordMonitor.keywords, id: \.self) { keyword in
+                            keywordRow(keyword)
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(height: min(CGFloat(model.keywordMonitor.keywords.count) * 36 + 10, 118))
+                .background(.quaternary.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
+    }
+
+    private func keywordRow(_ keyword: String) -> some View {
+        HStack(spacing: 8) {
+            Text(keyword)
+                .lineLimit(1)
+                .help(keyword)
+            Spacer()
+            if model.isTargetDetected && model.keywordMonitor.matchedKeywords.contains(keyword) {
+                Label("감지됨", systemImage: "bell.badge.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+            Button {
+                model.removeKeyword(keyword)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("키워드 삭제: \(keyword)")
+            .accessibilityLabel("키워드 삭제: \(keyword)")
+        }
+        .frame(minHeight: 30)
+    }
+
+    private func addKeyword() {
+        if model.addKeyword(keywordDraft) {
+            keywordDraft = ""
+            keywordError = nil
+        } else {
+            keywordError = "빈 키워드나 이미 등록된 키워드는 추가할 수 없습니다."
+        }
+        isKeywordInputFocused = true
     }
 
     private var previewAndResult: some View {

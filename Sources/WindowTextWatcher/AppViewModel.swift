@@ -8,18 +8,31 @@ final class AppViewModel: ObservableObject {
     @Published var windows: [CaptureWindow] = []
     @Published var selectedWindowID: CGWindowID?
     @Published var latestFrame: CGImage?
-    @Published var region = CGRect(x: 0, y: 0, width: 1, height: 1)
-    @Published var targetText = "" {
+    @Published var region = CGRect(x: 0, y: 0, width: 1, height: 1) {
         didSet {
-            detectionGate.reset()
+            saveSettings()
         }
     }
+    @Published private(set) var keywordMonitor = KeywordMonitor()
     @Published var caseSensitive = false {
         didSet {
-            detectionGate.reset()
+            keywordMonitor.reset()
+            isTargetDetected = false
+            saveSettings()
         }
     }
-    @Published var cooldownSeconds: Double = DetectionGate.defaultCooldown
+    @Published var ignoreWhitespace = false {
+        didSet {
+            keywordMonitor.reset()
+            isTargetDetected = false
+            saveSettings()
+        }
+    }
+    @Published var cooldownSeconds: Double = DetectionGate.defaultCooldown {
+        didSet {
+            saveSettings()
+        }
+    }
     @Published var recognizedText = ""
     @Published var isCapturing = false
     @Published var isChangingCapture = false
@@ -34,15 +47,28 @@ final class AppViewModel: ObservableObject {
     private let notificationService = NotificationService()
     private var lastOCRDate = Date.distantPast
     private var isOCRInFlight = false
-    private var detectionGate = DetectionGate()
     private let ocrInterval: TimeInterval = 0.45
     private var monitoringHealth = MonitoringHealth()
     private var healthTimer: Timer?
     private var captureSessionID = UUID()
+    private let settingsStore: SettingsStore
+    private var isRestoringSettings = true
 
     init(
-        arguments: [String] = ProcessInfo.processInfo.arguments
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        settingsStore: SettingsStore = SettingsStore()
     ) {
+        self.settingsStore = settingsStore
+        let settings = settingsStore.load()
+        for keyword in settings.keywords {
+            keywordMonitor.add(keyword)
+        }
+        caseSensitive = settings.caseSensitive
+        ignoreWhitespace = settings.ignoreWhitespace
+        cooldownSeconds = settings.cooldownSeconds
+        region = settings.region
+        isRestoringSettings = false
+
         let launchOptions = LaunchOptions(arguments: arguments)
 
         captureService.onFrame = { [weak self] image in
@@ -242,7 +268,7 @@ final class AppViewModel: ObservableObject {
         }
 
         statusText = "캡처 시작 중…"
-        detectionGate.reset()
+        keywordMonitor.reset()
         captureSessionID = UUID()
         let sessionID = captureSessionID
         isCapturing = true
@@ -345,6 +371,22 @@ final class AppViewModel: ObservableObject {
         region = CGRect(x: 0, y: 0, width: 1, height: 1)
     }
 
+    func addKeyword(_ text: String) -> Bool {
+        let added = keywordMonitor.add(text)
+        if added {
+            saveSettings()
+        }
+        return added
+    }
+
+    func removeKeyword(_ keyword: String) {
+        keywordMonitor.remove(keyword)
+        saveSettings()
+        isTargetDetected = isCapturing
+            && monitoringIssue == nil
+            && !keywordMonitor.matchedKeywords.isEmpty
+    }
+
     private func handleFrame(_ image: CGImage) {
         guard isCapturing else {
             return
@@ -352,6 +394,20 @@ final class AppViewModel: ObservableObject {
         latestFrame = image
         monitoringHealth.receivedFrame(at: ProcessInfo.processInfo.systemUptime)
         processLatestFrame()
+    }
+
+    private func saveSettings() {
+        guard !isRestoringSettings else {
+            return
+        }
+
+        settingsStore.save(WatcherSettings(
+            keywords: keywordMonitor.keywords,
+            caseSensitive: caseSensitive,
+            ignoreWhitespace: ignoreWhitespace,
+            cooldownSeconds: cooldownSeconds,
+            region: region
+        ))
     }
 
     private func processLatestFrame() {
@@ -402,17 +458,17 @@ final class AppViewModel: ObservableObject {
     private func handleRecognizedText(_ text: String) {
         recognizedText = text
 
-        let matcher = TextMatcher(
-            target: targetText,
-            caseSensitive: caseSensitive
+        let notifications = keywordMonitor.evaluate(
+            text,
+            caseSensitive: caseSensitive,
+            cooldown: cooldownSeconds,
+            ignoreWhitespace: ignoreWhitespace
         )
-        let isMatch = matcher.matches(text)
-        isTargetDetected = isMatch
-        detectionGate.cooldown = max(0, cooldownSeconds)
+        isTargetDetected = !keywordMonitor.matchedKeywords.isEmpty
 
-        if detectionGate.shouldNotify(isMatch: isMatch) {
+        if !notifications.isEmpty {
             notificationService.sendDetectedNotification(
-                target: targetText,
+                target: notifications.joined(separator: ", "),
                 recognizedText: text
             )
         }
